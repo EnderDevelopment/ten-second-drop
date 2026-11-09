@@ -12,22 +12,29 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 DROP_IMAGE_URL = os.getenv("DROP_IMAGE_URL", "").strip()
 DROP_MESSAGE = os.getenv("DROP_MESSAGE", "A special drop is here! Be ready to claim it.").strip()
+try:
+    DROP_COUNTDOWN_SECONDS = int(os.getenv("DROP_COUNTDOWN_SECONDS", "10"))
+except ValueError as error:
+    raise RuntimeError("DROP_COUNTDOWN_SECONDS must be a whole number from 1 to 3600.") from error
+if not 1 <= DROP_COUNTDOWN_SECONDS <= 3600:
+    raise RuntimeError("DROP_COUNTDOWN_SECONDS must be between 1 and 3600.")
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 class DropView(discord.ui.View):
-    def __init__(self, drop_message: str):
+    def __init__(self, drop_message: str, countdown_seconds: int):
         super().__init__(timeout=300)
         self.drop_message = drop_message
+        self.countdown_seconds = countdown_seconds
         self.available = False
         self.claimed = False
         self.message = None
 
     async def start_countdown(self, message: discord.Message):
         self.message = message
-        for remaining in range(10, 0, -1):
+        for remaining in range(self.countdown_seconds, 0, -1):
             embed = discord.Embed(
                 title="A drop is coming!",
                 description=f"{self.drop_message}\n\n**Claim opens in {remaining} seconds...**",
@@ -92,24 +99,32 @@ async def on_ready():
 
 
 @bot.tree.command(name="drop", description="Start a timed drop with a claim button.")
-@app_commands.describe(message="Optional message to show with this drop")
-async def drop(interaction: discord.Interaction, message: str | None = None):
+@app_commands.describe(
+    message="Optional message to show with this drop",
+    seconds="Optional countdown duration in seconds (1-3600)",
+)
+async def drop(
+    interaction: discord.Interaction,
+    message: str | None = None,
+    seconds: app_commands.Range[int, 1, 3600] | None = None,
+):
     if OWNER_ID == 0 or interaction.user.id != OWNER_ID:
         await interaction.response.send_message("You are not allowed to start drops.", ephemeral=True)
         return
 
     drop_message = message.strip() if message and message.strip() else DROP_MESSAGE
-    view = DropView(drop_message)
+    countdown_seconds = seconds if seconds is not None else DROP_COUNTDOWN_SECONDS
+    view = DropView(drop_message, countdown_seconds)
     initial_embed = discord.Embed(
         title="A drop is coming!",
-        description=f"{drop_message}\n\n**Claim opens in 10 seconds...**",
+        description=f"{drop_message}\n\n**Claim opens in {countdown_seconds} seconds...**",
         color=discord.Color.gold(),
     )
     if DROP_IMAGE_URL:
         initial_embed.set_image(url=DROP_IMAGE_URL)
     await interaction.response.send_message(embed=initial_embed, view=view)
-    message = await interaction.original_response()
-    asyncio.create_task(view.start_countdown(message))
+    response_message = await interaction.original_response()
+    asyncio.create_task(view.start_countdown(response_message))
 
 
 if not TOKEN:
